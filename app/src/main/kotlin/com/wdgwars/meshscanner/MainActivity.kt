@@ -17,6 +17,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -102,6 +104,30 @@ class MainActivity : ComponentActivity() {
     private val meshRssi = mutableMapOf<String, Int>()
     private lateinit var usbManager: UsbManager
     private lateinit var wifiManager: WifiManager
+    private lateinit var locationManager: LocationManager
+    private var gpsEnabled = false
+    private var gpsFix = false
+    private val locationListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            lastLocation = location
+            gpsFix = location.provider == LocationManager.GPS_PROVIDER ||
+                location.accuracy > 0f
+            scannerView.invalidate()
+        }
+        override fun onProviderEnabled(provider: String) {
+            if (provider == LocationManager.GPS_PROVIDER) {
+                gpsEnabled = true
+                scannerView.invalidate()
+            }
+        }
+        override fun onProviderDisabled(provider: String) {
+            if (provider == LocationManager.GPS_PROVIDER) {
+                gpsEnabled = false
+                gpsFix = false
+                scannerView.invalidate()
+            }
+        }
+    }
     private val wifiReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: Intent) {
             if (intent.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) return
@@ -153,6 +179,7 @@ class MainActivity : ComponentActivity() {
         loadObservations()
         usbManager = getSystemService(USB_SERVICE) as UsbManager
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         scannerView = MeshWarsView(this)
         setContentView(scannerView)
         val usbFilter = IntentFilter().apply {
@@ -173,6 +200,7 @@ class MainActivity : ComponentActivity() {
             registerReceiver(wifiReceiver, wifiFilter)
         }
         updateUsbStatus()
+        updateGpsState()
     }
 
     override fun onDestroy() {
@@ -180,6 +208,10 @@ class MainActivity : ComponentActivity() {
         runCatching { unregisterReceiver(wifiReceiver) }
         meshGatts.values.forEach { it.close() }
         meshGatts.clear()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED) {
+            runCatching { locationManager.removeUpdates(locationListener) }
+        }
         super.onDestroy()
     }
 
@@ -189,6 +221,14 @@ class MainActivity : ComponentActivity() {
             val device = devices.first()
             status = "USB radio ready: ${device.productName ?: "Heltec V3"}"
         }
+        scannerView.invalidate()
+    }
+
+    private fun updateGpsState() {
+        gpsEnabled = runCatching {
+            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+        }.getOrDefault(false)
+        if (!gpsEnabled) gpsFix = false
         scannerView.invalidate()
     }
 
@@ -355,6 +395,12 @@ class MainActivity : ComponentActivity() {
     private var lastLocation: Location? = null
     private fun requestLocation(onReady: (() -> Unit)? = null) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+        updateGpsState()
+        runCatching {
+            locationManager.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER, 1_000L, 1f, locationListener
+            )
+        }
         LocationServices.getFusedLocationProviderClient(this).lastLocation
             .addOnSuccessListener {
                 lastLocation = it
@@ -970,6 +1016,15 @@ class MainActivity : ComponentActivity() {
             text(canvas, "WDG // MESH SCANNER", 64f, 76f, 31f, paper, true)
             text(canvas, if (scanning) "RADIO ACTIVE" else "STANDBY", 66f, 119f, 20f,
                 if (scanning) olive else muted, true)
+            text(canvas, when {
+                !gpsEnabled -> "GPS OFF"
+                gpsFix -> "GPS FIX"
+                else -> "GPS SEARCH"
+            }, 66f, 143f, 16f, when {
+                !gpsEnabled -> AndroidColor.rgb(165, 87, 68)
+                gpsFix -> olive
+                else -> amber
+            }, true)
             text(canvas, "MESHCORE  ${observations.count { it.network == "meshcore" }}",
                 590f, 76f, 17f, amber, true)
             text(canvas, "MESHTASTIC  ${observations.count { it.network == "meshtastic" }}",
