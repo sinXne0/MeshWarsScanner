@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mw_bg">#0B0D0D</color>
+    <color name="mw_surface">#171A19</color>
+    <color name="mw_surface_raised">#222624</color>
+    <color name="mw_border">#4B5049</color>
+    <color name="mw_text_primary">#D7D8CF</color>
+    <color name="mw_text_secondary">#9A9D91</color>
+    <color name="mw_accent_olive">#9EAD69</color>
+    <color name="mw_accent_amber">#C28C4C</color>
+    <color name="mw_alert_rust">#A55744</color>
+    <color name="mw_scan_green">#83A56B</color>
+</resources>

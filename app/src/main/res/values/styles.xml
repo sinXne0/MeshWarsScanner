@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.MeshWarsScanner" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@drawable/meshwars_screen_background</item>
+        <item name="android:colorAccent">@color/mw_accent_olive</item>
+        <item name="android:statusBarColor">@color/mw_bg</item>
+        <item name="android:navigationBarColor">@color/mw_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>
