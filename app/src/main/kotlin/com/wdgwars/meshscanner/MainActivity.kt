@@ -328,10 +328,13 @@ class MainActivity : ComponentActivity() {
         if (permissions().any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
             requestPermissions(permissions(), 10); return
         }
-        val adapter = BluetoothAdapter.getDefaultAdapter()
-        scanner = adapter.bluetoothLeScanner
-        callback = object : ScanCallback() {
-            override fun onScanResult(type: Int, result: ScanResult) {
+        try {
+            val adapter = BluetoothAdapter.getDefaultAdapter()
+                ?: throw IllegalStateException("Bluetooth is unavailable")
+            scanner = adapter.bluetoothLeScanner
+                ?: throw IllegalStateException("Bluetooth LE is unavailable")
+            callback = object : ScanCallback() {
+                override fun onScanResult(type: Int, result: ScanResult) {
                 val record = result.scanRecord ?: return
                 val serviceIds = (
                     record.serviceUuids?.map { it.uuid.toString().lowercase() }.orEmpty() +
@@ -364,9 +367,25 @@ class MainActivity : ComponentActivity() {
                 } else if (network == "meshtastic" && !meshGatts.containsKey(id)) {
                     connectMeshtastic(result)
                 }
+                }
+                override fun onScanFailed(errorCode: Int) {
+                    scanning = false
+                    status = "Bluetooth scan failed: $errorCode"
+                    scannerView.invalidate()
+                }
             }
+            scanner?.startScan(callback)
+        } catch (e: SecurityException) {
+            scanning = false
+            status = "Bluetooth permission required"
+            scannerView.invalidate()
+            return
+        } catch (e: Exception) {
+            scanning = false
+            status = "Scan unavailable: ${e.message ?: "radio error"}"
+            scannerView.invalidate()
+            return
         }
-        scanner?.startScan(callback)
         scanning = true
         status = "Scanning BLE advertisements"
         requestLocation {
