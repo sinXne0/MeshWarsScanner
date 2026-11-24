@@ -11,6 +11,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.wifi.WifiManager
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
@@ -65,6 +66,7 @@ private const val MESHCORE_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 private const val MESHCORE_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 private const val MESHCORE_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 private const val UPLOAD_URL = "https://wdgwars.pl/endpoint/upload/"
+private const val UPLOAD_CSV_URL = "https://wdgwars.pl/endpoint/upload-csv"
 private const val GITHUB_RELEASES_URL =
     "https://api.github.com/repos/sinXne0/MeshWarsScanner/releases/latest"
 
@@ -80,7 +82,9 @@ data class Observation(
     val nodeType: String = "REPEATER",
     val pathHops: Int? = null,
     val snr: Double? = null,
-    val decoded: Boolean = false
+    val decoded: Boolean = false,
+    val frequency: Int = 0,
+    val auth: String = "[BLE]"
 )
 
 class MainActivity : ComponentActivity() {
@@ -97,6 +101,33 @@ class MainActivity : ComponentActivity() {
     private val meshGatts = mutableMapOf<String, BluetoothGatt>()
     private val meshRssi = mutableMapOf<String, Int>()
     private lateinit var usbManager: UsbManager
+    private lateinit var wifiManager: WifiManager
+    private val wifiReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            if (intent.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) return
+            if (!intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)) return
+            val location = lastLocation ?: return
+            val seen = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
+                PackageManager.PERMISSION_GRANTED) return
+            wifiManager.scanResults.forEach { result ->
+                val bssid = result.BSSID?.replace(":", "")?.lowercase() ?: return@forEach
+                if (!bssid.matches(Regex("[0-9a-f]{12}"))) return@forEach
+                val item = Observation(
+                    bssid, result.SSID ?: "", "wifi", result.level,
+                    location.latitude, location.longitude, seen,
+                    decoded = true, frequency = result.frequency,
+                    auth = wifiAuth(result.capabilities)
+                )
+                observations.removeAll { it.nodeId == bssid }
+                observations.add(0, item)
+            }
+            saveObservations()
+            status = "Wi-Fi scan: ${wifiManager.scanResults.size} networks"
+            scannerView.invalidate()
+        }
+    }
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: Intent) {
             when (intent.action) {
@@ -121,6 +152,7 @@ class MainActivity : ComponentActivity() {
         apiKey = decrypt(prefs.getString("api_key", "")) ?: ""
         loadObservations()
         usbManager = getSystemService(USB_SERVICE) as UsbManager
+        wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         scannerView = MeshWarsView(this)
         setContentView(scannerView)
         val usbFilter = IntentFilter().apply {
@@ -131,13 +163,21 @@ class MainActivity : ComponentActivity() {
             registerReceiver(usbReceiver, usbFilter, RECEIVER_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
-            registerReceiver(usbReceiver, usbFilter)
+        registerReceiver(usbReceiver, usbFilter)
+        }
+        val wifiFilter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(wifiReceiver, wifiFilter, RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(wifiReceiver, wifiFilter)
         }
         updateUsbStatus()
     }
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(usbReceiver) }
+        runCatching { unregisterReceiver(wifiReceiver) }
         meshGatts.values.forEach { it.close() }
         meshGatts.clear()
         super.onDestroy()
@@ -150,6 +190,18 @@ class MainActivity : ComponentActivity() {
             status = "USB radio ready: ${device.productName ?: "Heltec V3"}"
         }
         scannerView.invalidate()
+    }
+
+    private fun wifiAuth(capabilities: String?): String {
+        val caps = capabilities.orEmpty()
+        return when {
+            caps.contains("SAE", true) -> "[WPA3-SAE]"
+            caps.contains("EAP", true) -> "[WPA2-EAP]"
+            caps.contains("WEP", true) -> "[WEP]"
+            caps.contains("PSK", true) -> "[WPA2-PSK]"
+            caps.contains("OWE", true) -> "[WPA3-OWE]"
+            else -> "[ESS]"
+        }
     }
 
     private fun loadObservations() {
@@ -229,7 +281,7 @@ class MainActivity : ComponentActivity() {
 
     private fun permissions(): Array<String> = if (android.os.Build.VERSION.SDK_INT >= 31) {
         arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION)
+            Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.NEARBY_WIFI_DEVICES)
     } else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
 
     private fun startScan() {
@@ -253,14 +305,14 @@ class MainActivity : ComponentActivity() {
                         name.contains("t-beam", true) ||
                         name.contains("t-deck", true) -> "meshtastic"
                     serviceIds.contains(MESHCORE_SERVICE) || name.contains("meshcore", true) -> "meshcore"
-                    else -> return
+                    else -> "ble"
                 }
                 val loc = lastLocation
                 val id = result.device.address.replace(":", "").lowercase()
                 meshRssi[id] = result.rssi
                 val now = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
                 val item = Observation(id, name, network, result.rssi, loc?.latitude ?: 0.0,
-                    loc?.longitude ?: 0.0, now)
+                    loc?.longitude ?: 0.0, now, decoded = network == "ble", auth = "[BLE]")
                 runOnUiThread {
                     observations.removeAll { it.nodeId == id }
                     observations.add(0, item)
@@ -275,6 +327,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         scanner?.startScan(callback)
+        runCatching { wifiManager.startScan() }
         scanning = true
         status = "Scanning BLE advertisements"
         requestLocation()
@@ -549,6 +602,53 @@ class MainActivity : ComponentActivity() {
             (bytes[offset + 3].toInt() shl 24)
     }
 
+    private fun csvQuote(value: String): String =
+        "\"" + value.replace("\"", "\"\"") + "\""
+
+    private fun channelForFrequency(frequency: Int): Int {
+        return when {
+            frequency in 2401..2483 -> ((frequency - 2407) / 5).coerceAtLeast(1)
+            frequency in 5000..5900 -> ((frequency - 5000) / 5).coerceAtLeast(1)
+            else -> 0
+        }
+    }
+
+    private fun buildWardriveCsv(records: List<Observation>): ByteArray {
+        val header = "WigleWifi-1.6,appRelease=1.2.0,model=Android,release=1.0.0," +
+            "device=MeshWarsScanner,display=Android,board=Android,brand=MeshWars\n" +
+            "MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,CurrentLatitude," +
+            "CurrentLongitude,AltitudeMeters,AccuracyMeters,Type,DistanceMeters,ProbeCount\n"
+        val rows = records.joinToString("") {
+            listOf(
+                it.nodeId, csvQuote(it.name), it.auth, it.seen,
+                channelForFrequency(it.frequency).toString(), it.rssi.toString(),
+                it.lat.toString(), it.lon.toString(), "0", "0",
+                if (it.network == "wifi") "WIFI" else "BLE", "0", "0"
+            ).joinToString(",") + "\n"
+        }
+        return (header + rows).toByteArray(Charsets.UTF_8)
+    }
+
+    private fun uploadWardriveCsv(records: List<Observation>): String {
+        val boundary = "----MeshWars${UUID.randomUUID().toString().replace("-", "")}"
+        val csv = buildWardriveCsv(records)
+        val body = java.io.ByteArrayOutputStream()
+        body.write("--$boundary\r\n".toByteArray())
+        body.write("Content-Disposition: form-data; name=\"file\"; filename=\"meshwars.csv\"\r\n".toByteArray())
+        body.write("Content-Type: text/csv\r\n\r\n".toByteArray())
+        body.write(csv)
+        body.write("\r\n--$boundary--\r\n".toByteArray())
+        val conn = URL(UPLOAD_CSV_URL).openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"; conn.doOutput = true
+        conn.connectTimeout = 15_000; conn.readTimeout = 60_000
+        conn.setRequestProperty("X-API-Key", apiKey)
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        conn.outputStream.use { it.write(body.toByteArray()) }
+        val code = conn.responseCode
+        if (code !in 200..299) throw Exception("CSV upload HTTP $code")
+        return "Uploaded ${records.size} Wi-Fi/BLE records"
+    }
+
     private suspend fun upload() {
         if (apiKey.isBlank()) { status = "Enter your WDGWARS API key first"; return }
         if (observations.isEmpty()) { status = "Nothing to upload"; return }
@@ -565,8 +665,12 @@ class MainActivity : ComponentActivity() {
         status = "Uploading ${eligible.size} WDGWARS-ready nodes…"
         val result = withContext(Dispatchers.IO) {
             try {
+                val wardrive = eligible.filter { it.network == "wifi" || it.network == "ble" }
+                val mesh = eligible.filter { it.network == "meshcore" || it.network == "meshtastic" }
+                val messages = mutableListOf<String>()
+                if (wardrive.isNotEmpty()) messages += uploadWardriveCsv(wardrive)
                 var uploaded = 0
-                eligible.chunked(1000).forEach { batch ->
+                mesh.chunked(1000).forEach { batch ->
                     val nodes = JSONArray()
                     batch.forEach {
                         nodes.put(JSONObject().apply {
@@ -607,7 +711,8 @@ class MainActivity : ComponentActivity() {
                     if (code !in 200..299) throw Exception("HTTP $code")
                     uploaded += batch.size
                 }
-                "Uploaded $uploaded WDGWARS-ready nodes"
+                if (uploaded > 0) messages += "Uploaded $uploaded mesh nodes"
+                messages.joinToString(" + ").ifBlank { "Nothing to upload" }
             } catch (e: Exception) { "Upload failed: ${e.message}" }
         }
         status = result
