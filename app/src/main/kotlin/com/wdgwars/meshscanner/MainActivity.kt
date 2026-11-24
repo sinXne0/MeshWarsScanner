@@ -958,6 +958,7 @@ class MainActivity : ComponentActivity() {
                 connection.connectTimeout = 10_000
                 connection.readTimeout = 15_000
                 connection.setRequestProperty("Accept", "application/vnd.github+json")
+                connection.setRequestProperty("User-Agent", "MeshWarsScanner/${BuildConfig.VERSION_NAME}")
                 val release = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
                 val tag = release.optString("tag_name").removePrefix("v")
                 val latest = tag.split(".").mapNotNull { it.toIntOrNull() }
@@ -986,7 +987,12 @@ class MainActivity : ComponentActivity() {
                             .setPositiveButton("INSTALL") { _, _ -> downloadUpdate(downloadUrl) }
                             .show()
                     } else {
-                        status = "Already up to date"
+                        status = "MeshWars Scanner ${BuildConfig.VERSION_NAME} is current"
+                        android.app.AlertDialog.Builder(this@MainActivity)
+                            .setTitle("No OTA update")
+                            .setMessage("You are running ${BuildConfig.VERSION_NAME}, the latest GitHub release.")
+                            .setPositiveButton("OK", null)
+                            .show()
                         scannerView.invalidate()
                     }
                 }
@@ -1007,6 +1013,7 @@ class MainActivity : ComponentActivity() {
                 val connection = URL(url).openConnection() as HttpURLConnection
                 connection.connectTimeout = 15_000
                 connection.readTimeout = 60_000
+                connection.setRequestProperty("User-Agent", "MeshWarsScanner/${BuildConfig.VERSION_NAME}")
                 val file = java.io.File(cacheDir, "MeshWarsScanner-update.apk")
                 connection.inputStream.use { input ->
                     file.outputStream().use { output -> input.copyTo(output) }
