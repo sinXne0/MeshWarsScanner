@@ -15,8 +15,8 @@ android {
         applicationId = "com.wdgwars.meshscanner"
         minSdk = 29
         targetSdk = 35
-        versionCode = 19
-        versionName = "1.2.7"
+        versionCode = 20
+        versionName = "1.2.8"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

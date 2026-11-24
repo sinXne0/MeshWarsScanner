@@ -319,10 +319,21 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) { "" }
     }
 
-    private fun permissions(): Array<String> = if (android.os.Build.VERSION.SDK_INT >= 31) {
-        arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.NEARBY_WIFI_DEVICES)
-    } else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    private fun permissions(): Array<String> {
+        val required = if (android.os.Build.VERSION.SDK_INT >= 31) {
+            mutableListOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        } else {
+            mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            required += Manifest.permission.NEARBY_WIFI_DEVICES
+        }
+        return required.toTypedArray()
+    }
 
     private fun startScan() {
         if (permissions().any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
