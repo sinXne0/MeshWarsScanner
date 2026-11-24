@@ -29,6 +29,7 @@ import android.view.View
 import android.widget.EditText
 import android.text.InputType
 import android.net.Uri
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
@@ -130,6 +131,7 @@ class MainActivity : ComponentActivity() {
     }
     private val wifiReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: Intent) {
+            try {
             if (intent.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) return
             val location = lastLocation
             val seen = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -152,6 +154,9 @@ class MainActivity : ComponentActivity() {
             saveObservations()
             status = "Wi-Fi scan: ${results.size} networks${if (location == null) " • GPS pending" else ""}"
             scannerView.invalidate()
+            } catch (error: Throwable) {
+                reportRuntimeError(error)
+            }
         }
     }
     private val usbReceiver = object : BroadcastReceiver() {
@@ -177,11 +182,20 @@ class MainActivity : ComponentActivity() {
         window.decorView.systemUiVisibility = 0
         apiKey = decrypt(prefs.getString("api_key", "")) ?: ""
         loadObservations()
+        prefs.getString("last_crash", null)?.let {
+            status = "Previous scan error: ${it.take(80)}"
+            prefs.edit().remove("last_crash").apply()
+        }
         usbManager = getSystemService(USB_SERVICE) as UsbManager
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         scannerView = MeshWarsView(this)
         setContentView(scannerView)
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            prefs.edit().putString("last_crash", Log.getStackTraceString(error)).apply()
+            previousHandler?.uncaughtException(thread, error)
+        }
         val usbFilter = IntentFilter().apply {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
@@ -201,6 +215,11 @@ class MainActivity : ComponentActivity() {
         }
         updateUsbStatus()
         updateGpsState()
+    }
+
+    private fun reportRuntimeError(error: Throwable) {
+        status = "Error: ${error.javaClass.simpleName}"
+        scannerView.invalidate()
     }
 
     override fun onDestroy() {
@@ -453,6 +472,7 @@ class MainActivity : ComponentActivity() {
         val address = result.device.address.replace(":", "").lowercase()
         val gatt = result.device.connectGatt(this, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                try {
                 if (newState == BluetoothGatt.STATE_CONNECTED) {
                     meshGatts[address] = gatt
                     gatt.requestMtu(247)
@@ -461,9 +481,11 @@ class MainActivity : ComponentActivity() {
                     meshGatts.remove(address)
                     gatt.close()
                 }
+                } catch (error: Throwable) { reportRuntimeError(error); runCatching { gatt.close() } }
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                try {
                 val service = gatt.getService(UUID.fromString(MESHCORE_SERVICE)) ?: return
                 val tx = service.getCharacteristic(UUID.fromString(MESHCORE_TX)) ?: return
                 val rx = service.getCharacteristic(UUID.fromString(MESHCORE_RX)) ?: return
@@ -477,14 +499,17 @@ class MainActivity : ComponentActivity() {
                 rx.value = byteArrayOf(1, 0, 0, 0, 0, 0, 0, 0) +
                     "MeshWars".toByteArray()
                 gatt.writeCharacteristic(rx)
+                } catch (error: Throwable) { reportRuntimeError(error); runCatching { gatt.close() } }
             }
 
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic
             ) {
+                try {
                 if (characteristic.uuid.toString().equals(MESHCORE_TX, true)) {
                     parseMeshCorePacket(address, characteristic.value)
                 }
+                } catch (error: Throwable) { reportRuntimeError(error) }
             }
         })
         meshGatts[address] = gatt
@@ -521,6 +546,7 @@ class MainActivity : ComponentActivity() {
         val address = result.device.address.replace(":", "").lowercase()
         val gatt = result.device.connectGatt(this, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                try {
                 if (newState == BluetoothGatt.STATE_CONNECTED) {
                     meshGatts[address] = gatt
                     gatt.requestMtu(247)
@@ -529,9 +555,11 @@ class MainActivity : ComponentActivity() {
                     meshGatts.remove(address)
                     gatt.close()
                 }
+                } catch (error: Throwable) { reportRuntimeError(error); runCatching { gatt.close() } }
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                try {
                 val service = gatt.getService(UUID.fromString(MESHTASTIC_SERVICE)) ?: return
                 val fromRadio = service.getCharacteristic(UUID.fromString(MESHTASTIC_FROM_RADIO)) ?: return
                 val toRadio = service.getCharacteristic(UUID.fromString(MESHTASTIC_TO_RADIO)) ?: return
@@ -549,22 +577,27 @@ class MainActivity : ComponentActivity() {
                     )) == null) {
                     requestMeshtasticNodes(gatt)
                 }
+                } catch (error: Throwable) { reportRuntimeError(error); runCatching { gatt.close() } }
             }
 
             override fun onDescriptorWrite(
                 gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int
             ) {
+                try {
                 if (descriptor.characteristic.uuid.toString().equals(MESHTASTIC_FROM_RADIO, true)) {
                     requestMeshtasticNodes(gatt)
                 }
+                } catch (error: Throwable) { reportRuntimeError(error) }
             }
 
             override fun onCharacteristicChanged(
                 gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic
             ) {
+                try {
                 if (characteristic.uuid.toString().equals(MESHTASTIC_FROM_RADIO, true)) {
                     parseMeshtasticFromRadio(address, characteristic.value)
                 }
+                } catch (error: Throwable) { reportRuntimeError(error) }
             }
         })
         meshGatts[address] = gatt
