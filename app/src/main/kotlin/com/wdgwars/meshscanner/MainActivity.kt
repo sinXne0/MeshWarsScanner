@@ -720,7 +720,13 @@ class MainActivity : ComponentActivity() {
                 messages.joinToString(" + ").ifBlank { "Nothing to upload" }
             } catch (e: Exception) { "Upload failed: ${e.message}" }
         }
-        status = result
+        if (result.startsWith("Uploaded")) {
+            observations.removeAll { candidate -> eligible.any { it.nodeId == candidate.nodeId } }
+            saveObservations()
+            status = "$result • local records deleted"
+        } else {
+            status = result
+        }
         runOnUiThread { scannerView.invalidate() }
     }
 
