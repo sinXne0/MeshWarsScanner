@@ -105,13 +105,13 @@ class MainActivity : ComponentActivity() {
     private val wifiReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: Intent) {
             if (intent.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) return
-            if (!intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)) return
             val location = lastLocation ?: return
             val seen = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             if (android.os.Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
                 PackageManager.PERMISSION_GRANTED) return
-            wifiManager.scanResults.forEach { result ->
+            val results = runCatching { wifiManager.scanResults }.getOrDefault(emptyList())
+            results.forEach { result ->
                 val bssid = result.BSSID?.replace(":", "")?.lowercase() ?: return@forEach
                 if (!bssid.matches(Regex("[0-9a-f]{12}"))) return@forEach
                 val item = Observation(
@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
                 observations.add(0, item)
             }
             saveObservations()
-            status = "Wi-Fi scan: ${wifiManager.scanResults.size} networks"
+            status = "Wi-Fi scan: ${results.size} networks"
             scannerView.invalidate()
         }
     }
@@ -327,10 +327,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         scanner?.startScan(callback)
-        runCatching { wifiManager.startScan() }
         scanning = true
         status = "Scanning BLE advertisements"
-        requestLocation()
+        requestLocation {
+            runCatching { wifiManager.startScan() }
+                .onFailure { status = "Wi-Fi scan unavailable: ${it.message}" }
+        }
         scannerView.invalidate()
         scanHandler.postDelayed({
             if (scanning) stopScan()
@@ -346,10 +348,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private var lastLocation: Location? = null
-    private fun requestLocation() {
+    private fun requestLocation(onReady: (() -> Unit)? = null) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
         LocationServices.getFusedLocationProviderClient(this).lastLocation
-            .addOnSuccessListener { lastLocation = it }
+            .addOnSuccessListener {
+                lastLocation = it
+                onReady?.invoke()
+            }
     }
 
     private fun connectMeshCore(result: ScanResult) {
@@ -943,6 +948,8 @@ class MainActivity : ComponentActivity() {
                 590f, 76f, 17f, amber, true)
             text(canvas, "MESHTASTIC  ${observations.count { it.network == "meshtastic" }}",
                 590f, 106f, 17f, olive, true)
+            text(canvas, "WIFI ${observations.count { it.network == "wifi" }}  BLE ${observations.count { it.network == "ble" }}",
+                590f, 136f, 15f, paper, true)
             text(canvas, "EXPORT", 790f, 151f, 14f, amber, true)
             text(canvas, "UPDATE", 670f, 151f, 14f, olive, true)
             text(canvas, "NODES ${observations.size}  //  ${status.take(34).uppercase()}",
