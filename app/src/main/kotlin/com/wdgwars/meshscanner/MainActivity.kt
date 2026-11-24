@@ -105,7 +105,7 @@ class MainActivity : ComponentActivity() {
     private val wifiReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: Intent) {
             if (intent.action != WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) return
-            val location = lastLocation ?: return
+            val location = lastLocation
             val seen = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             if (android.os.Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
                 if (!bssid.matches(Regex("[0-9a-f]{12}"))) return@forEach
                 val item = Observation(
                     bssid, result.SSID ?: "", "wifi", result.level,
-                    location.latitude, location.longitude, seen,
+                    location?.latitude ?: 0.0, location?.longitude ?: 0.0, seen,
                     decoded = true, frequency = result.frequency,
                     auth = wifiAuth(result.capabilities)
                 )
@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
                 observations.add(0, item)
             }
             saveObservations()
-            status = "Wi-Fi scan: ${results.size} networks"
+            status = "Wi-Fi scan: ${results.size} networks${if (location == null) " • GPS pending" else ""}"
             scannerView.invalidate()
         }
     }
@@ -330,8 +330,13 @@ class MainActivity : ComponentActivity() {
         scanning = true
         status = "Scanning BLE advertisements"
         requestLocation {
-            runCatching { wifiManager.startScan() }
-                .onFailure { status = "Wi-Fi scan unavailable: ${it.message}" }
+            if (!wifiManager.isWifiEnabled) {
+                status = "Wi-Fi is turned off"
+            } else {
+                runCatching { wifiManager.startScan() }
+                    .onFailure { status = "Wi-Fi scan unavailable: ${it.message}" }
+            }
+            scannerView.invalidate()
         }
         scannerView.invalidate()
         scanHandler.postDelayed({
@@ -665,6 +670,11 @@ class MainActivity : ComponentActivity() {
         }
         if (eligible.isEmpty()) {
             status = "No uploadable nodes: GPS fix is required by WDGWARS"
+            android.app.AlertDialog.Builder(this)
+                .setTitle("UPLOAD NOT SENT")
+                .setMessage("No captured records have a valid GPS fix yet.")
+                .setPositiveButton("OK", null)
+                .show()
             return
         }
         status = "Uploading ${eligible.size} WDGWARS-ready nodes…"
@@ -724,8 +734,18 @@ class MainActivity : ComponentActivity() {
             observations.removeAll { candidate -> eligible.any { it.nodeId == candidate.nodeId } }
             saveObservations()
             status = "$result • local records deleted"
+            android.app.AlertDialog.Builder(this)
+                .setTitle("UPLOAD SUCCESSFUL")
+                .setMessage("$result\n\nUploaded records were removed from this device.")
+                .setPositiveButton("OK", null)
+                .show()
         } else {
             status = result
+            android.app.AlertDialog.Builder(this)
+                .setTitle("UPLOAD FAILED")
+                .setMessage("$result\n\nYour local records were kept.")
+                .setPositiveButton("OK", null)
+                .show()
         }
         runOnUiThread { scannerView.invalidate() }
     }
