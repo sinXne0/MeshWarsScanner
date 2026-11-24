@@ -335,12 +335,13 @@ class MainActivity : ComponentActivity() {
                 ?: throw IllegalStateException("Bluetooth LE is unavailable")
             callback = object : ScanCallback() {
                 override fun onScanResult(type: Int, result: ScanResult) {
+                try {
                 val record = result.scanRecord ?: return
                 val serviceIds = (
                     record.serviceUuids?.map { it.uuid.toString().lowercase() }.orEmpty() +
                         record.serviceData.keys.map { it.uuid.toString().lowercase() }
                     ).distinct()
-                val name = result.device.name ?: record.deviceName ?: "BLE mesh device"
+                val name = record.deviceName ?: "BLE device"
                 val network = when {
                     serviceIds.contains(MESHTASTIC_SERVICE) ||
                         name.contains("meshtastic", true) ||
@@ -366,6 +367,14 @@ class MainActivity : ComponentActivity() {
                     connectMeshCore(result)
                 } else if (network == "meshtastic" && !meshGatts.containsKey(id)) {
                     connectMeshtastic(result)
+                }
+                } catch (error: Throwable) {
+                    runOnUiThread {
+                        scanning = false
+                        callback?.let { scanner?.stopScan(it) }
+                        status = "Scan error: ${error.javaClass.simpleName}"
+                        scannerView.invalidate()
+                    }
                 }
                 }
                 override fun onScanFailed(errorCode: Int) {
@@ -851,6 +860,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openSettings() {
         val choices = arrayOf(
+            "Grant scan permissions",
             "Check for OTA update",
             "Set WDGWARS API key",
             "Export capture",
@@ -860,10 +870,11 @@ class MainActivity : ComponentActivity() {
             .setTitle("MeshWars settings")
             .setItems(choices) { _, which ->
                 when (which) {
-                    0 -> checkForUpdate()
-                    1 -> editApiKey()
-                    2 -> exportCapture()
-                    3 -> android.app.AlertDialog.Builder(this)
+                    0 -> grantScanPermissions()
+                    1 -> checkForUpdate()
+                    2 -> editApiKey()
+                    3 -> exportCapture()
+                    4 -> android.app.AlertDialog.Builder(this)
                         .setTitle("Clear captures?")
                         .setMessage("This removes locally saved observations.")
                         .setNegativeButton("CANCEL", null)
@@ -875,6 +886,23 @@ class MainActivity : ComponentActivity() {
                         }.show()
                 }
             }.show()
+    }
+
+    private fun grantScanPermissions() {
+        val missing = permissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 10)
+        updateGpsState()
+        if (!gpsEnabled) {
+            startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        }
+        status = if (missing.isEmpty() && gpsEnabled) {
+            "Scan permissions already granted"
+        } else {
+            "Permission request opened"
+        }
+        scannerView.invalidate()
     }
 
     private fun checkForUpdate() {
