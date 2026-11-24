@@ -1,0 +1,39 @@
+name: Build and publish APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Publish release APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk MeshWarsScanner.apk
+          gh release create "${GITHUB_REF_NAME}" MeshWarsScanner.apk \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "MeshWars Scanner ${GITHUB_REF_NAME}" \
+            --generate-notes
