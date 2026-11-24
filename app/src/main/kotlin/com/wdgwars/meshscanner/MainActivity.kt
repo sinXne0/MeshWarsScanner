@@ -648,6 +648,34 @@ class MainActivity : ComponentActivity() {
              }.show()
     }
 
+    private fun openSettings() {
+        val choices = arrayOf(
+            "Check for OTA update",
+            "Set WDGWARS API key",
+            "Export capture",
+            "Clear local captures"
+        )
+        android.app.AlertDialog.Builder(this)
+            .setTitle("MeshWars settings")
+            .setItems(choices) { _, which ->
+                when (which) {
+                    0 -> checkForUpdate()
+                    1 -> editApiKey()
+                    2 -> exportCapture()
+                    3 -> android.app.AlertDialog.Builder(this)
+                        .setTitle("Clear captures?")
+                        .setMessage("This removes locally saved observations.")
+                        .setNegativeButton("CANCEL", null)
+                        .setPositiveButton("CLEAR") { _, _ ->
+                            observations.clear()
+                            saveObservations()
+                            status = "Local captures cleared"
+                            scannerView.invalidate()
+                        }.show()
+                }
+            }.show()
+    }
+
     private fun checkForUpdate() {
         status = "Checking GitHub for updates…"
         scannerView.invalidate()
@@ -884,7 +912,7 @@ class MainActivity : ComponentActivity() {
             paint.style = Paint.Style.FILL
             text(canvas, if (scanning) "STOP SCAN" else "START SCAN", 112f, 1543f, 16f, paper, true)
             text(canvas, "UPLOAD", 420f, 1543f, 16f, paper, true)
-            text(canvas, "UPLINK KEY", 688f, 1543f, 16f, paper, true)
+            text(canvas, "SETTINGS", 688f, 1543f, 16f, paper, true)
             selectedNode?.let {
                 text(canvas, "LOCK ${it.name.take(18)}", 70f, 1477f, 13f, paper, true)
             }
@@ -899,7 +927,7 @@ class MainActivity : ComponentActivity() {
                 y in 1500f..1580f && x < 310f -> if (scanning) stopScan() else startScan()
                 y in 1500f..1580f && x in 310f..620f ->
                     lifecycleScope.launch { upload() }
-                y in 1500f..1580f && x > 620f -> editApiKey()
+                y in 1500f..1580f && x > 620f -> openSettings()
                 y in 120f..190f && x > 780f -> exportCapture()
                 y in 120f..190f && x in 560f..780f -> checkForUpdate()
                 y in 120f..190f && x in 300f..560f -> {
